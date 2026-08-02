@@ -1,0 +1,55 @@
+{
+  "name": "roblox-bridge-agent",
+  "version": "1.0.0",
+  "description": "A local-first MCP bridge, script capsule runtime, and observability dashboard for authorized Roblox development.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/evonar543/roblox_bridge_agent.git"
+  },
+  "homepage": "https://github.com/evonar543/roblox_bridge_agent#readme",
+  "bugs": {
+    "url": "https://github.com/evonar543/roblox_bridge_agent/issues"
+  },
+  "keywords": [
+    "mcp",
+    "roblox",
+    "luau",
+    "websocket",
+    "developer-tools",
+    "script-capsules"
+  ],
+  "type": "module",
+  "bin": {
+    "roblox-bridge-agent": "./dist/index.js",
+    "rba-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "lua/rba_autoloader.lua",
+    "rba-profiles.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "npm run build && node tests/runtime-stability.mjs && node tests/capsule-smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.21.0",
+    "ws": "^8.18.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "luaparse": "^0.3.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

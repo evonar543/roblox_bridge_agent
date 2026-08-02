@@ -1,0 +1,42 @@
+{
+  "profiles": {
+    "debug": [
+      {
+        "type": "preset",
+        "preset": "debug_runtime"
+      },
+      {
+        "type": "preset",
+        "preset": "console_mirror"
+      },
+      {
+        "type": "eval",
+        "label": "debug-summary",
+        "script": "return _G.RBA and _G.RBA.snapshot and _G.RBA.snapshot() or { error = 'RBA debug runtime not installed' }"
+      }
+    ],
+    "autoload": [
+      {
+        "type": "file",
+        "path": "lua/rba_autoloader.lua"
+      }
+    ],
+    "navigation": [
+      {
+        "type": "preset",
+        "preset": "save_return_point"
+      },
+      {
+        "type": "preset",
+        "preset": "character_position"
+      }
+    ],
+    "ui-test": [
+      {
+        "type": "eval",
+        "label": "gui-summary",
+        "script": "local Players = game:GetService('Players'); local player = Players.LocalPlayer; local gui = player and player:FindFirstChildOfClass('PlayerGui'); local children = {}; if gui then for _, child in ipairs(gui:GetChildren()) do children[#children + 1] = { name = child.Name, className = child.ClassName } end end; return { playerGui = gui, children = children }"
+      }
+    ]
+  }
+}
