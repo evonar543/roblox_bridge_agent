@@ -65,7 +65,7 @@ Requirements:
 Install and verify:
 
 ```powershell
-git clone https://github.com/evonar543/roblox_bridge_agent.git
+git clone --recurse-submodules https://github.com/evonar543/roblox_bridge_agent.git
 Set-Location roblox_bridge_agent
 npm install
 npm test
@@ -119,6 +119,25 @@ getgenv().RBA_MODE = "rba-only"
 -- or
 getgenv().RBA_ENABLE_INSTANCE_MANAGER = false
 ```
+
+## Supported integrations
+
+RBA now has a first-class integration registry shown by `rba_list_integrations`
+and the dashboard's **Connected Workflow** panel. It reports live status for RBA
+Core, the Roblox Instance Manager companion, Potassium and Volt autoexec targets,
+and the active Codex MCP server.
+
+The Roblox Instance Manager source is included as a pinned, attributed Git
+submodule under `integrations/roblox-instance-manager-src`. Run
+`scripts/setup-integrations.ps1` to initialize and build both projects. See
+[`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) for the full source, autoexec, MCP,
+and troubleshooting workflow.
+
+The same localhost dashboard now includes a **Setup Center** where users can add
+autoexec folders, see whether each loader is current, and synchronize every
+configured target without editing environment variables by hand. The guided
+PowerShell installer is idempotent and explains every install, reuse, build, and
+failure step.
 
 ## Script Capsules
 

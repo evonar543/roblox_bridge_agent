@@ -10,6 +10,7 @@ import { watch, type FSWatcher, promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
+import { integrationCatalog, integrationDescriptor, integrationIds, type IntegrationDescriptor, type IntegrationId } from "./integrations/catalog.js";
 
 type ClientRecord = {
   id: number;
@@ -149,6 +150,7 @@ const LOG_VALUE_DEPTH = Number.parseInt(process.env.RBA_LOG_VALUE_DEPTH ?? "5", 
 const BACKUP_DIR = ".rba-backups";
 const CAPSULE_DIR = ".rba-capsules";
 const CAPSULE_REGISTRY_PATH = process.env.RBA_CAPSULES_PATH ?? "rba-capsules.json";
+const SETTINGS_PATH = "rba-settings.json";
 const AUTOEXEC_FILENAME = "rba_autoloader.lua";
 const CONSOLE_EVENT_TYPES = new Set(["client_print", "client_warn", "client_error", "client_console", "client_console_dropped", "log", "trace"]);
 const AUTO_SYNC_AUTOEXEC = (process.env.RBA_SYNC_AUTOEXEC ?? "true").toLowerCase() !== "false";
@@ -167,7 +169,7 @@ const configuredAutoexecPaths = (process.env.RBA_AUTOEXEC_PATHS ?? "")
   .split(";")
   .map((value) => value.trim())
   .filter(Boolean);
-const autoexecTargetPaths = Array.from(new Set([
+let autoexecTargetPaths = Array.from(new Set([
   ...(process.env.RBA_AUTOEXEC_PATH ? [process.env.RBA_AUTOEXEC_PATH] : []),
   ...configuredAutoexecPaths,
   ...defaultExecutorAutoexecPaths
@@ -1952,44 +1954,246 @@ async function installAutoexec(targetPath: string, sourcePath?: string): Promise
   return writeAutoexecFile({ targetPath, sourcePath, backup: true, reason: "manual_install" });
 }
 
+type RbaSettings = {
+  autoexecDirectories: string[];
+};
+
+let persistedSettings: RbaSettings = { autoexecDirectories: [] };
+
+function normalizeAutoexecDirectory(value: string): string {
+  const trimmed = value.trim().replace(/^"|"$/g, "");
+  if (!trimmed) throw new Error("An autoexec folder is required.");
+  const resolved = path.resolve(trimmed);
+  if (path.parse(resolved).root === resolved) {
+    throw new Error("A drive root cannot be used as an autoexec folder.");
+  }
+  return resolved;
+}
+
+function refreshAutoexecTargets(): void {
+  const persistedTargets = persistedSettings.autoexecDirectories.map((directory) => path.join(directory, AUTOEXEC_FILENAME));
+  autoexecTargetPaths = Array.from(new Set([
+    ...(process.env.RBA_AUTOEXEC_PATH ? [path.resolve(process.env.RBA_AUTOEXEC_PATH)] : []),
+    ...configuredAutoexecPaths,
+    ...defaultExecutorAutoexecPaths,
+    ...persistedTargets
+  ]));
+}
+
+async function loadRbaSettings(): Promise<RbaSettings> {
+  const settingsFile = assertInsideWorkspace(SETTINGS_PATH);
+  if (!await pathExists(settingsFile)) {
+    refreshAutoexecTargets();
+    return persistedSettings;
+  }
+  try {
+    const value = JSON.parse(await fs.readFile(settingsFile, "utf8")) as unknown;
+    if (isRecord(value) && Array.isArray(value.autoexecDirectories)) {
+      persistedSettings = {
+        autoexecDirectories: Array.from(new Set(value.autoexecDirectories
+          .filter((entry): entry is string => typeof entry === "string")
+          .map(normalizeAutoexecDirectory)))
+      };
+    }
+  } catch (error) {
+    throw new Error(`Could not load ${SETTINGS_PATH}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  refreshAutoexecTargets();
+  return persistedSettings;
+}
+
+async function saveRbaSettings(settings: RbaSettings): Promise<RbaSettings> {
+  persistedSettings = {
+    autoexecDirectories: Array.from(new Set(settings.autoexecDirectories.map(normalizeAutoexecDirectory)))
+  };
+  const output = assertInsideWorkspace(SETTINGS_PATH);
+  const temporary = `${output}.${process.pid}.${randomUUID()}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify(persistedSettings, null, 2)}\n`, "utf8");
+  await fs.rename(temporary, output);
+  refreshAutoexecTargets();
+  return persistedSettings;
+}
+
+async function setupCenterStatus(): Promise<Record<string, unknown>> {
+  return {
+    settingsPath: SETTINGS_PATH,
+    settings: persistedSettings,
+    sourcePath: path.join(workspaceRoot, "lua", AUTOEXEC_FILENAME),
+    targets: await Promise.all(autoexecTargetPaths.map(autoexecTargetStatus)),
+    instanceManager: await instanceManagerStatus(1200)
+  };
+}
+
+function resolveInstanceManagerScriptUrl(): URL {
+  const url = new URL(INSTANCE_MANAGER_SCRIPT_URL);
+  if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname)) {
+    throw new Error("Instance Manager access is restricted to loopback hosts.");
+  }
+  return url;
+}
+
+async function fetchInstanceManagerLoader(timeoutMs = 3000): Promise<{
+  url: string;
+  statusCode: number;
+  contentType: string | null;
+  body: string;
+  bytes: number;
+  sha256: string;
+  looksLikeLua: boolean;
+}> {
+  const url = resolveInstanceManagerScriptUrl();
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Accept: "text/plain" },
+    signal: AbortSignal.timeout(Math.max(100, Math.min(timeoutMs, 15_000)))
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`Instance Manager returned HTTP ${response.status}.`);
+  }
+  const bytes = Buffer.byteLength(body);
+  if (bytes > 1024 * 1024) {
+    throw new Error("Instance Manager loader exceeds the 1 MiB safety limit.");
+  }
+  return {
+    url: url.toString(),
+    statusCode: response.status,
+    contentType: response.headers.get("content-type"),
+    body,
+    bytes,
+    sha256: sha256(body),
+    looksLikeLua: /^\s*--/.test(body) || /\b(local|function)\b/.test(body.slice(0, 1024))
+  };
+}
+
 async function instanceManagerStatus(timeoutMs = 3000): Promise<Record<string, unknown>> {
   const checkedAt = now();
-  let url: URL;
   try {
-    url = new URL(INSTANCE_MANAGER_SCRIPT_URL);
-  } catch {
-    return { ok: false, url: INSTANCE_MANAGER_SCRIPT_URL, checkedAt, error: "Invalid Instance Manager script URL." };
-  }
-  if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname)) {
-    return { ok: false, url: url.toString(), checkedAt, error: "Instance Manager status probes are restricted to loopback hosts." };
-  }
-
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "text/plain" },
-      signal: AbortSignal.timeout(Math.max(100, Math.min(timeoutMs, 15_000)))
-    });
-    const body = await response.text();
+    const source = await fetchInstanceManagerLoader(timeoutMs);
     return {
-      ok: response.ok,
-      url: url.toString(),
+      ok: true,
+      url: source.url,
       checkedAt,
-      statusCode: response.status,
-      contentType: response.headers.get("content-type"),
-      bytes: Buffer.byteLength(body),
-      sha256: sha256(body),
-      looksLikeLua: /^\s*--/.test(body) || /\b(local|function)\b/.test(body.slice(0, 1024)),
-      error: response.ok ? undefined : `Instance Manager returned HTTP ${response.status}.`
+      statusCode: source.statusCode,
+      contentType: source.contentType,
+      bytes: source.bytes,
+      sha256: source.sha256,
+      looksLikeLua: source.looksLikeLua
     };
   } catch (error) {
     return {
       ok: false,
-      url: url.toString(),
+      url: INSTANCE_MANAGER_SCRIPT_URL,
       checkedAt,
       error: error instanceof Error ? error.message : String(error)
     };
   }
+}
+
+async function instanceManagerSourceStatus(): Promise<Record<string, unknown>> {
+  const descriptor = integrationDescriptor("roblox-instance-manager");
+  const relativePath = descriptor.source?.localPath ?? "integrations/roblox-instance-manager-src";
+  const sourceRoot = assertInsideWorkspace(relativePath);
+  const packagePath = path.join(sourceRoot, "package.json");
+  const licensePath = path.join(sourceRoot, "LICENSE");
+  let packageMetadata: Record<string, unknown> | undefined;
+  if (await pathExists(packagePath)) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(packagePath, "utf8")) as unknown;
+      packageMetadata = isRecord(parsed) ? parsed : undefined;
+    } catch {
+      // The existence and parse failure are reported independently below.
+    }
+  }
+  return {
+    path: relativePath,
+    present: await pathExists(sourceRoot),
+    packagePresent: await pathExists(packagePath),
+    licensePresent: await pathExists(licensePath),
+    packageName: packageMetadata?.name,
+    packageVersion: packageMetadata?.version,
+    expectedCommit: descriptor.source?.commit,
+    repository: descriptor.source?.repository
+  };
+}
+
+function instanceManagerClientBridges(clientList: unknown): unknown[] {
+  if (!Array.isArray(clientList)) {
+    return [];
+  }
+  return clientList.flatMap((client) => {
+    if (!isRecord(client) || !isRecord(client.hello) || !isRecord(client.hello.capabilities) || !isRecord(client.hello.capabilities.instanceManagerBridge)) {
+      return [];
+    }
+    return [{ clientId: client.id, ...client.hello.capabilities.instanceManagerBridge }];
+  });
+}
+
+async function integrationStatuses(timeoutMs = 3000): Promise<{
+  ok: boolean;
+  checkedAt: string;
+  integrations: Array<IntegrationDescriptor & { state: "connected" | "ready" | "stale" | "not_configured" | "unavailable"; runtime: unknown }>;
+}> {
+  const [rba, clientsState, instanceManager, source, autoexecTargets] = await Promise.all([
+    bridgeStatus(),
+    bridgeClients(),
+    instanceManagerStatus(timeoutMs),
+    instanceManagerSourceStatus(),
+    Promise.all(autoexecTargetPaths.map(autoexecTargetStatus))
+  ]);
+  const rbaRecord = isRecord(rba) ? rba : {};
+  const websocket = isRecord(rbaRecord.websocket) ? rbaRecord.websocket : undefined;
+  const rbaReady = rbaRecord.proxy === true || websocket?.running === true;
+  const bridges = instanceManagerClientBridges(clientsState);
+  const targetByExecutor = new Map(autoexecTargets.flatMap((target) => isRecord(target) && typeof target.executor === "string"
+    ? [[target.executor.toLowerCase(), target] as const]
+    : []));
+  const integrations = integrationCatalog.map((descriptor) => {
+    let state: "connected" | "ready" | "stale" | "not_configured" | "unavailable" = "not_configured";
+    let runtime: unknown;
+    if (descriptor.id === "rba-core") {
+      state = rbaReady ? "connected" : "unavailable";
+      runtime = rba;
+    } else if (descriptor.id === "roblox-instance-manager") {
+      const healthy = instanceManager.ok === true;
+      state = healthy && bridges.length > 0 ? "connected" : healthy ? "ready" : "unavailable";
+      runtime = { server: instanceManager, clientBridges: bridges, source };
+    } else if (descriptor.id === "potassium" || descriptor.id === "volt") {
+      const target = targetByExecutor.get(descriptor.id);
+      state = !target ? "not_configured" : target.matchesSource === true ? "ready" : target.exists === true ? "stale" : "not_configured";
+      runtime = target;
+    } else if (descriptor.id === "codex-mcp") {
+      state = "connected";
+      runtime = { serverName: "Roblox Bridge Agent", workspaceRoot, pid: process.pid };
+    }
+    return { ...descriptor, state, runtime };
+  });
+  return {
+    ok: integrations.every((entry) => entry.id === "potassium" || entry.id === "volt" || ["connected", "ready"].includes(entry.state)),
+    checkedAt: now(),
+    integrations
+  };
+}
+
+async function saveInstanceManagerLoader(options: { path: string; timeoutMs: number }): Promise<Record<string, unknown>> {
+  const source = await fetchInstanceManagerLoader(options.timeoutMs);
+  const destination = assertInsideWorkspace(options.path);
+  const backup = await pathExists(destination) ? await backupWorkspaceFile(options.path, "before_instance_manager_loader_refresh") : undefined;
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  const temporaryPath = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+  await fs.writeFile(temporaryPath, source.body, "utf8");
+  await fs.rename(temporaryPath, destination);
+  const result = {
+    ok: true,
+    path: path.relative(workspaceRoot, destination),
+    url: source.url,
+    bytes: source.bytes,
+    sha256: source.sha256,
+    backup,
+    savedAt: now()
+  };
+  addEvent({ at: now(), type: "instance_manager_source_saved", message: `Saved Instance Manager loader to ${result.path}`, data: result });
+  return result;
 }
 
 async function healthCheck(options: { includePing: boolean; timeoutMs: number }): Promise<Record<string, unknown>> {
@@ -3684,6 +3888,13 @@ function dashboardHtml(): string {
     .capsule strong { display: block; font-size: var(--text-sm); }
     .capsule code { color: var(--accent-hover); font-family: var(--font-mono); font-size: var(--text-xs); }
     .permission { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: var(--text-xs); }
+    .integration-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-3); }
+    .integration { display: grid; gap: var(--sp-2); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-md); background: rgba(15,15,19,.62); }
+    .integration-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+    .integration-state { border-radius: var(--r-full); padding: 3px 8px; font-size: var(--text-xs); border: 1px solid var(--border); color: var(--text-muted); }
+    .integration-state.connected, .integration-state.ready { color: var(--success); border-color: rgba(74,222,128,.42); background: rgba(74,222,128,.08); }
+    .integration-state.stale { color: var(--warn); border-color: rgba(251,191,36,.42); background: rgba(251,191,36,.08); }
+    .integration code { overflow-wrap: anywhere; color: var(--accent-hover); font-family: var(--font-mono); font-size: var(--text-xs); }
     .toast-region { position: fixed; right: var(--sp-5); bottom: var(--sp-5); z-index: 10; display: grid; gap: var(--sp-2); max-width: min(400px, calc(100vw - 32px)); }
     .toast { padding: var(--sp-3) var(--sp-4); border: 1px solid rgba(157,145,255,.55); border-radius: var(--r-md); background: rgba(25,24,37,.96); box-shadow: var(--shadow-md); animation: toast-in 220ms ease-out; font-size: var(--text-sm); }
     .toast.error { border-color: rgba(248,113,113,.7); }
@@ -3706,6 +3917,8 @@ function dashboardHtml(): string {
     <div class="row"><span class="activity" id="activityText">Initializing command center</span><button class="btn" id="refreshBtn">Refresh</button><button class="btn btn-ghost" id="snapshotBtn">Context</button></div>
   </header>
   <main>
+    <section class="card wide"><h2>Connected Workflow</h2><div class="muted" style="margin-bottom:12px">Live detection for RBA, Roblox Instance Manager, executor autoexec targets, and this MCP session.</div><div class="integration-grid" id="integrations"><div class="muted">Detecting integrations</div></div></section>
+    <section class="card wide"><h2>Setup Center</h2><div class="stack"><div class="muted">Add an executor's autoexec folder. RBA always writes its own <code>rba_autoloader.lua</code>, creates backups when content changes, and rejects drive roots.</div><div class="row"><input class="input" id="autoexecDirectory" placeholder="C:\\path\\to\\executor\\autoexec"><button class="btn" id="addAutoexecBtn">Add folder</button><button class="btn btn-ghost" id="syncAutoexecBtn">Sync all</button></div><div class="error" id="setupError"></div><pre id="setupState">Loading setup state</pre></div></section>
     <section class="card"><h2>Clients</h2><div id="clientsEmpty" class="muted">No clients yet.</div><div id="clients"></div></section>
     <section class="card"><h2>Profiles</h2><div class="row"><select class="input" id="profileSelect"></select><button class="btn" id="runProfileBtn">Run</button></div><div class="error" id="profileError"></div></section>
     <section class="card wide"><h2>Send Lua</h2><div class="stack"><textarea class="input" id="luaInput" placeholder="return game.PlaceId"></textarea><div class="row"><button class="btn" id="sendBtn">Send</button><button class="btn btn-ghost" id="evalBtn">Eval</button></div><div class="error" id="sendError"></div></div></section>
@@ -3744,13 +3957,19 @@ function dashboardHtml(): string {
         return '<div class="capsule"><div><strong>' + escapeHtml(capsule.name) + '</strong><code>' + escapeHtml(capsule.id) + ' · ' + escapeHtml(capsule.filePath) + '</code><div class="muted">' + permissions + '</div></div><div class="row"><button class="btn btn-ghost capsule-snapshot" data-id="' + escapeHtml(capsule.id) + '">Snapshot</button><button class="btn capsule-run" data-id="' + escapeHtml(capsule.id) + '">Run</button></div></div>';
       }).join('') : '<div class="muted">No capsules yet. Create one to give a script an explicit policy and rollback history.</div>';
     }
+    function renderIntegrations(integrations) {
+      $('integrations').innerHTML = integrations.map((integration) => {
+        const detail = integration.endpoint || integration.path || (integration.source && integration.source.localPath) || integration.kind;
+        return '<div class="integration"><div class="integration-head"><strong>' + escapeHtml(integration.name) + '</strong><span class="integration-state ' + escapeHtml(integration.state) + '">' + escapeHtml(integration.state) + '</span></div><div class="muted">' + escapeHtml(integration.summary) + '</div><code>' + escapeHtml(detail) + '</code></div>';
+      }).join('');
+    }
     async function refresh(silent = false) {
       if (refreshing || busy) return;
       refreshing = true;
       if (!silent) setActivity('Refreshing live command state');
       try {
-        const [status, clients, events, watchers, profiles, screenshots, capsules] = await Promise.all([
-          api('/api/status'), api('/api/clients'), api('/api/events?limit=60'), api('/api/watchers'), api('/api/profiles'), api('/api/screenshots'), api('/api/capsules')
+        const [status, clients, events, watchers, profiles, screenshots, capsules, integrations, setup] = await Promise.all([
+          api('/api/status'), api('/api/clients'), api('/api/events?limit=60'), api('/api/watchers'), api('/api/profiles'), api('/api/screenshots'), api('/api/capsules'), api('/api/integrations'), api('/api/setup')
         ]);
         const online = Boolean(status.websocket && status.websocket.running);
         $('statusText').textContent = online ? status.websocket.url : 'websocket stopped';
@@ -3762,6 +3981,8 @@ function dashboardHtml(): string {
         showJson('watchers', watchers);
         showJson('screenshots', screenshots);
         renderCapsules(capsules.capsules || []);
+        renderIntegrations(integrations.integrations || []);
+        showJson('setupState', setup);
         const newestEvent = events[0];
         setActivity(newestEvent ? 'Live · ' + newestEvent.type + ' · ' + new Date(newestEvent.at).toLocaleTimeString() : 'Live · waiting for activity');
       } catch (error) {
@@ -3780,6 +4001,8 @@ function dashboardHtml(): string {
     $('runProfileBtn').addEventListener('click', () => action('Running profile', () => api('/api/run-profile', { method: 'POST', body: JSON.stringify({ name: $('profileSelect').value }) }), 'profileError'));
     $('watchBtn').addEventListener('click', () => action('Starting watcher', () => api('/api/watch', { method: 'POST', body: JSON.stringify({ path: $('watchPath').value }) }), 'watchError'));
     $('captureBtn').addEventListener('click', () => action('Capturing Roblox window', () => api('/api/capture', { method: 'POST', body: JSON.stringify({}) }), 'screenshotError'));
+    $('addAutoexecBtn').addEventListener('click', () => action('Saving autoexec folder', () => api('/api/setup/autoexec', { method: 'POST', body: JSON.stringify({ directory: $('autoexecDirectory').value }) }), 'setupError'));
+    $('syncAutoexecBtn').addEventListener('click', () => action('Synchronizing configured autoexec folders', () => api('/api/setup/sync-autoexec', { method: 'POST', body: JSON.stringify({}) }), 'setupError'));
     $('createCapsuleBtn').addEventListener('click', () => action('Creating script capsule', () => api('/api/capsules', { method: 'POST', body: JSON.stringify({ id: $('capsuleId').value, name: $('capsuleName').value, path: $('capsulePath').value, permissions: Array.from(document.querySelectorAll('.permission input:checked')).map((input) => input.value) }) }), 'capsuleError'));
     $('capsules').addEventListener('click', (event) => { const button = event.target.closest('button[data-id]'); if (!button) return; const id = button.dataset.id; if (button.classList.contains('capsule-snapshot')) action('Creating capsule snapshot', () => api('/api/capsule-snapshot', { method: 'POST', body: JSON.stringify({ id, reason: 'dashboard_snapshot' }) }), 'capsuleError'); if (button.classList.contains('capsule-run')) action('Preflighting and running capsule', () => api('/api/capsule-run', { method: 'POST', body: JSON.stringify({ id, mode: 'eval', snapshotBeforeRun: true }) }), 'capsuleError'); });
     refresh();
@@ -3818,7 +4041,9 @@ async function handleDashboardRequest(request: IncomingMessage, response: Server
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/status") return sendJson(response, 200, serverStatus());
-      if (request.method === "GET" && url.pathname === "/api/clients") return sendJson(response, 200, activeExecutorClients().map(clientSummary));
+    if (request.method === "GET" && url.pathname === "/api/integrations") return sendJson(response, 200, await integrationStatuses(1500));
+    if (request.method === "GET" && url.pathname === "/api/setup") return sendJson(response, 200, await setupCenterStatus());
+    if (request.method === "GET" && url.pathname === "/api/clients") return sendJson(response, 200, activeExecutorClients().map(clientSummary));
     if (request.method === "GET" && url.pathname === "/api/events") {
       return sendJson(response, 200, filterEvents({
         limit: Number.parseInt(url.searchParams.get("limit") ?? "50", 10),
@@ -3883,6 +4108,16 @@ async function handleDashboardRequest(request: IncomingMessage, response: Server
       const screenshotPath = defaultScreenshotPath("dashboard-roblox");
       const meta = await captureRobloxOrDesktop(assertInsideWorkspace(screenshotPath), true);
       return sendJson(response, 200, meta);
+    }
+    if (request.method === "POST" && url.pathname === "/api/setup/autoexec") {
+      const body = await readJsonBody(request);
+      const directory = normalizeAutoexecDirectory(String(body.directory ?? ""));
+      await fs.mkdir(directory, { recursive: true });
+      await saveRbaSettings({ autoexecDirectories: [...persistedSettings.autoexecDirectories, directory] });
+      return sendJson(response, 200, await setupCenterStatus());
+    }
+    if (request.method === "POST" && url.pathname === "/api/setup/sync-autoexec") {
+      return sendJson(response, 200, await syncAutoloaderToAutoexec("dashboard_setup_sync", true));
     }
     if (request.method === "POST" && url.pathname === "/api/capsules") {
       const body = await readJsonBody(request);
@@ -4422,6 +4657,56 @@ server.tool(
       checkedAt: now()
     });
   }
+);
+
+server.tool(
+  "rba_list_integrations",
+  "List every supported RBA integration with live readiness, detected paths/endpoints, pinned source metadata, and setup guidance.",
+  {
+    timeoutMs: z.number().int().min(100).max(15000).default(3000)
+  },
+  async ({ timeoutMs }) => jsonText(await integrationStatuses(timeoutMs))
+);
+
+server.tool(
+  "rba_integration_status",
+  "Inspect one supported integration and return its live state plus the exact setup steps and source provenance.",
+  {
+    id: z.enum(integrationIds),
+    timeoutMs: z.number().int().min(100).max(15000).default(3000)
+  },
+  async ({ id, timeoutMs }) => {
+    const status = await integrationStatuses(timeoutMs);
+    return jsonText(status.integrations.find((entry) => entry.id === id) ?? integrationDescriptor(id as IntegrationId));
+  }
+);
+
+server.tool(
+  "rba_get_instance_manager_source",
+  "Fetch the currently served loopback-only Roblox Instance Manager Luau loader for inspection, with size and SHA-256 provenance.",
+  {
+    timeoutMs: z.number().int().min(100).max(15000).default(3000),
+    maxBytes: z.number().int().min(1024).max(1048576).default(262144)
+  },
+  async ({ timeoutMs, maxBytes }) => {
+    const loader = await fetchInstanceManagerLoader(timeoutMs);
+    return jsonText({
+      ...loader,
+      body: loader.body.slice(0, maxBytes),
+      truncated: loader.bytes > maxBytes,
+      returnedBytes: Buffer.byteLength(loader.body.slice(0, maxBytes), "utf8")
+    });
+  }
+);
+
+server.tool(
+  "rba_save_instance_manager_loader",
+  "Save the currently served loopback-only Instance Manager loader into the RBA workspace using atomic writes and an automatic backup of an existing file.",
+  {
+    path: z.string().default("integrations/runtime/instance-manager-loader.luau"),
+    timeoutMs: z.number().int().min(100).max(15000).default(3000)
+  },
+  async ({ path: outputPath, timeoutMs }) => jsonText(await saveInstanceManagerLoader({ path: outputPath, timeoutMs }))
 );
 
 server.tool(
@@ -5176,6 +5461,30 @@ server.tool(
 );
 
 server.tool(
+  "rba_setup_status",
+  "Show the beginner-friendly setup state: persisted autoexec folders, installed loader hashes, source path, and Instance Manager availability.",
+  {},
+  async () => jsonText(await setupCenterStatus())
+);
+
+server.tool(
+  "rba_add_autoexec_folder",
+  "Persist an executor autoexec folder and optionally install the unified loader immediately. The destination filename is always rba_autoloader.lua.",
+  {
+    directory: z.string().min(1),
+    installNow: z.boolean().default(true)
+  },
+  async ({ directory, installNow }) => {
+    const normalized = normalizeAutoexecDirectory(directory);
+    await fs.mkdir(normalized, { recursive: true });
+    await saveRbaSettings({ autoexecDirectories: [...persistedSettings.autoexecDirectories, normalized] });
+    const targetPath = path.join(normalized, AUTOEXEC_FILENAME);
+    const install = installNow ? await writeAutoexecFile({ targetPath, backup: true, reason: "setup_center" }) : undefined;
+    return jsonText({ ok: true, settings: persistedSettings, targetPath, install });
+  }
+);
+
+server.tool(
   "rba_list_autoexec_backups",
   "List sidecar backups created for an autoexec target.",
   {
@@ -5406,6 +5715,8 @@ server.tool(
     return jsonText(await searchWorkspaceFiles({ start, query, extensions, maxResults }));
   }
 );
+
+await loadRbaSettings();
 
 if (process.env.RBA_AUTO_START_WS === "true") {
   try {

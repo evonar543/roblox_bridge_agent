@@ -11,3 +11,5 @@ rba-capsules.json
 rba-connection.json
 lua/rba_connection.lua
 assets/*-chroma.png
+integrations/runtime/
+rba-settings.json

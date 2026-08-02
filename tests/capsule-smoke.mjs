@@ -48,6 +48,7 @@ function toolPayload(response) {
 try {
   await fs.mkdir(path.dirname(scriptPath), { recursive: true });
   await fs.writeFile(scriptPath, "return { revision = 1 }\n", "utf8");
+  await fs.copyFile(path.join(repoRoot, "lua", "rba_autoloader.lua"), path.join(testRoot, "lua", "rba_autoloader.lua"));
 
   child = spawn(process.execPath, [serverPath], {
     cwd: repoRoot,
@@ -98,10 +99,50 @@ try {
     "rba_list_capsule_snapshots",
     "rba_rollback_script_capsule",
     "rba_run_script_capsule",
-    "rba_git_status"
+    "rba_git_status",
+    "rba_list_integrations",
+    "rba_integration_status",
+    "rba_get_instance_manager_source",
+    "rba_save_instance_manager_loader",
+    "rba_setup_status",
+    "rba_add_autoexec_folder"
   ]) {
     assert.ok(toolNames.includes(required), `Expected MCP tool ${required}`);
   }
+
+  const integrations = toolPayload(await request("tools/call", {
+    name: "rba_list_integrations",
+    arguments: { timeoutMs: 250 }
+  }));
+  assert.equal(integrations.integrations.length, 5);
+  assert.deepEqual(integrations.integrations.map((entry) => entry.id), [
+    "rba-core",
+    "roblox-instance-manager",
+    "potassium",
+    "volt",
+    "codex-mcp"
+  ]);
+
+  const dashboardPort = 41000 + Math.floor(Math.random() * 1000);
+  toolPayload(await request("tools/call", {
+    name: "rba_dashboard_start",
+    arguments: { host: "127.0.0.1", port: dashboardPort }
+  }));
+  const dashboardHtml = await (await fetch(`http://127.0.0.1:${dashboardPort}/`)).text();
+  assert.match(dashboardHtml, /Connected Workflow/);
+  const dashboardIntegrations = await (await fetch(`http://127.0.0.1:${dashboardPort}/api/integrations`)).json();
+  assert.equal(dashboardIntegrations.integrations.length, 5);
+  const setupResponse = await (await fetch(`http://127.0.0.1:${dashboardPort}/api/setup`)).json();
+  assert.ok(Array.isArray(setupResponse.targets));
+  toolPayload(await request("tools/call", { name: "rba_dashboard_stop", arguments: {} }));
+
+  const customAutoexec = path.join(testRoot, "executor", "autoexec");
+  const configured = toolPayload(await request("tools/call", {
+    name: "rba_add_autoexec_folder",
+    arguments: { directory: customAutoexec, installNow: true }
+  }));
+  assert.equal(configured.ok, true);
+  assert.equal(await fs.readFile(path.join(customAutoexec, "rba_autoloader.lua"), "utf8"), await fs.readFile(path.join(repoRoot, "lua", "rba_autoloader.lua"), "utf8"));
 
   const created = toolPayload(await request("tools/call", {
     name: "rba_create_script_capsule",
