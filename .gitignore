@@ -13,3 +13,7 @@ lua/rba_connection.lua
 assets/*-chroma.png
 integrations/runtime/
 rba-settings.json
+artifacts/
+tools/RbaAutoexecManager/bin/
+tools/RbaAutoexecManager/obj/
+tools/RbaAutoexecManager/assets/rba-autoexec-manager.ico

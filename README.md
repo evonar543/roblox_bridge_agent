@@ -139,6 +139,28 @@ configured target without editing environment variables by hand. The guided
 PowerShell installer is idempotent and explains every install, reuse, build, and
 failure step.
 
+### RBA Autoexec Manager for Windows
+
+The standalone **RBA Autoexec Manager** provides a simple GUI for Volt,
+Potassium, and custom `autoexec` folders. It reports whether
+`rba_autoloader.lua` is disabled, current, or outdated. **Enable** installs the
+exact loader embedded from this repository; **Disable safely** moves the active
+file to a timestamped `.disabled` sidecar so it can be recovered. Replacing a
+different or outdated loader also creates a `.bak` copy first.
+
+Build a self-contained Windows x64 executable with .NET 10:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\RbaAutoexecManager\build.ps1
+```
+
+The executable is written to
+`artifacts\rba-autoexec-manager\win-x64\RBA Autoexec Manager.exe`. It includes
+the Lua loader and does not require a separately installed .NET runtime. The SVG
+icon source is in `tools/RbaAutoexecManager/assets/rba-autoexec-manager.svg`.
+For scripted setup, the same executable also accepts `--enable`, `--disable`, or
+`--status` with `--target Volt`, `--target Potassium`, or `--directory <path>`.
+
 ## Script Capsules
 
 A capsule manages one workspace Lua file with a stable id, display name, explicit permissions, timestamps, and source history.

@@ -60,6 +60,12 @@ discover and synchronize configured autoexec destinations for Potassium and Volt
 Use `rba_sync_autoexec`, then verify with `rba_unified_status`. Existing files are
 backed up before replacement.
 
+Windows users can also build or run the standalone **RBA Autoexec Manager** in
+`tools/RbaAutoexecManager`. Its GUI detects enabled, disabled, and outdated
+states for Volt, Potassium, or a custom folder. The executable embeds this same
+checked-in loader, updates it atomically, and preserves recoverable backup or
+disabled sidecar files instead of silently discarding an existing loader.
+
 To run RBA without the companion connector:
 
 ```lua
