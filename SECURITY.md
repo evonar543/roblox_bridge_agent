@@ -18,10 +18,11 @@ and the repository README before running it. A checksum proves that the file you
 downloaded is byte-for-byte identical to the published artifact; it does not by
 itself prove that software is safe.
 
-Release 1.0.1 is not Authenticode-signed, so Windows may show an unknown-publisher
+Release 1.0.2 is not Authenticode-signed, so Windows may show an unknown-publisher
 warning. Its source and build script are under `tools/RbaAutoexecManager`, and the
-release page links to a VirusTotal report for the exact published SHA-256. Treat
-scanner results as one security signal rather than an absolute guarantee.
+release page publishes the exact SHA-256. Never reuse a VirusTotal report from a
+different hash; treat scanner results as one security signal rather than an
+absolute guarantee.
 
 ## Deployment boundary
 

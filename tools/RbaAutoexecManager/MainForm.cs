@@ -290,6 +290,16 @@ internal sealed class MainForm : Form
     try
     {
       var status = _service.GetStatus(CurrentDirectory());
+      if (status.ResidualPaths.Count > 0)
+      {
+        var detail = status.State == LoaderState.Disabled
+            ? $"Found {status.ResidualPaths.Count} RBA file(s) still inside autoexec. Disable safely will move all of them outside this folder."
+            : $"Found {status.ResidualPaths.Count} unsafe RBA sidecar file(s). Enable will move them outside autoexec.";
+        SetStatus(AmberColor, "Cleanup required", detail, true, true);
+        _enableButton.Text = status.State == LoaderState.Disabled ? "Enable and clean" : "Clean autoexec";
+        return;
+      }
+
       switch (status.State)
       {
         case LoaderState.Current:
@@ -297,11 +307,11 @@ internal sealed class MainForm : Form
           _enableButton.Text = "Already enabled";
           break;
         case LoaderState.Outdated:
-          SetStatus(AmberColor, "Enabled but outdated", "A different loader is installed. Enable will back it up and install this build's current RBA loader.", true, true);
+          SetStatus(AmberColor, "Enabled but outdated", "A different loader is installed. Enable will move it outside autoexec and install this build's current RBA loader.", true, true);
           _enableButton.Text = "Update autoloader";
           break;
         default:
-          SetStatus(RedColor, "Disabled", "rba_autoloader.lua is not active in this autoexec folder.", true, false);
+          SetStatus(RedColor, "Disabled completely", "No RBA-managed loader or backup files remain inside this autoexec folder.", true, false);
           _enableButton.Text = "Enable autoloader";
           break;
       }

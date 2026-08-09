@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace RbaAutoexecManager;
 
@@ -16,7 +17,9 @@ internal sealed record LoaderStatus(
     string TargetPath,
     long InstalledBytes,
     string SourceHash,
-    string? InstalledHash);
+    string? InstalledHash,
+    string StorageDirectory,
+    IReadOnlyList<string> ResidualPaths);
 
 internal sealed record LoaderActionResult(bool Changed, string Message, string? BackupPath = null);
 
@@ -26,8 +29,9 @@ internal sealed class AutoexecService
   private const string LoaderResourceName = "RbaAutoexecManager.Resources.rba_autoloader.lua";
   private readonly byte[] _loaderBytes;
   private readonly string _sourceHash;
+  private readonly string _storageRoot;
 
-  internal AutoexecService()
+  internal AutoexecService(string? storageRoot = null)
   {
     using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(LoaderResourceName)
         ?? throw new InvalidOperationException("The embedded RBA autoloader is missing from this build.");
@@ -35,6 +39,10 @@ internal sealed class AutoexecService
     stream.CopyTo(memory);
     _loaderBytes = memory.ToArray();
     _sourceHash = Hash(_loaderBytes);
+    _storageRoot = storageRoot ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "RBA Autoexec Manager",
+        "loader-storage");
   }
 
   internal static string DefaultDirectory(string executorName)
@@ -52,9 +60,21 @@ internal sealed class AutoexecService
   {
     var normalized = NormalizeDirectory(directory);
     var targetPath = Path.Combine(normalized, LoaderFileName);
+    var residualPaths = GetManagedPaths(normalized)
+        .Where(path => !path.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+    var storageDirectory = GetStorageDirectory(normalized);
     if (!File.Exists(targetPath))
     {
-      return new LoaderStatus(LoaderState.Disabled, normalized, targetPath, 0, _sourceHash, null);
+      return new LoaderStatus(
+          LoaderState.Disabled,
+          normalized,
+          targetPath,
+          0,
+          _sourceHash,
+          null,
+          storageDirectory,
+          residualPaths);
     }
 
     var installed = File.ReadAllBytes(targetPath);
@@ -64,62 +84,73 @@ internal sealed class AutoexecService
         Convert.FromHexString(installedHash))
         ? LoaderState.Current
         : LoaderState.Outdated;
-    return new LoaderStatus(state, normalized, targetPath, installed.LongLength, _sourceHash, installedHash);
+    return new LoaderStatus(
+        state,
+        normalized,
+        targetPath,
+        installed.LongLength,
+        _sourceHash,
+        installedHash,
+        storageDirectory,
+        residualPaths);
   }
 
   internal LoaderActionResult Enable(string directory)
   {
     var status = GetStatus(directory);
-    if (status.State == LoaderState.Current)
+    if (status.State == LoaderState.Current && status.ResidualPaths.Count == 0)
     {
       return new LoaderActionResult(false, "The RBA autoloader is already enabled and current.");
     }
 
     Directory.CreateDirectory(status.Directory);
-    string? backupPath = null;
-    if (File.Exists(status.TargetPath))
+    var pathsToMove = status.ResidualPaths.ToList();
+    if (status.State == LoaderState.Outdated)
     {
-      backupPath = NextSidecarPath(status.TargetPath, "bak");
-      File.Copy(status.TargetPath, backupPath, overwrite: false);
+      pathsToMove.Add(status.TargetPath);
     }
 
-    var temporaryPath = Path.Combine(
-        status.Directory,
-        $".{LoaderFileName}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
+    var movedPaths = MoveOutsideAutoexec(status, pathsToMove, activeKind: "backup");
 
-    try
+    var restoredFromStorage = false;
+    if (status.State != LoaderState.Current)
     {
-      File.WriteAllBytes(temporaryPath, _loaderBytes);
-      File.Move(temporaryPath, status.TargetPath, overwrite: true);
-    }
-    finally
-    {
-      if (File.Exists(temporaryPath))
+      restoredFromStorage = TryRestoreStoredLoader(status);
+      if (!restoredFromStorage)
       {
-        File.Delete(temporaryPath);
+        WriteActiveLoader(status);
       }
     }
 
-    var message = status.State == LoaderState.Outdated
-        ? "The installed loader was backed up and updated."
-        : "The RBA autoloader is enabled.";
-    return new LoaderActionResult(true, message, backupPath);
+    var message = status.State switch
+    {
+      LoaderState.Outdated => "The previous loader was moved outside autoexec and updated.",
+      LoaderState.Current => "Unsafe RBA sidecars were moved outside autoexec; the current loader remains enabled.",
+      _ when restoredFromStorage => "The RBA autoloader was restored from safe storage; all RBA sidecars remain outside autoexec.",
+      _ => "The RBA autoloader is enabled and all RBA sidecars are outside autoexec."
+    };
+    return new LoaderActionResult(true, message, movedPaths.Count > 0 ? status.StorageDirectory : null);
   }
 
   internal LoaderActionResult Disable(string directory)
   {
     var status = GetStatus(directory);
-    if (status.State == LoaderState.Disabled)
+    var pathsToMove = status.ResidualPaths.ToList();
+    if (File.Exists(status.TargetPath))
+    {
+      pathsToMove.Add(status.TargetPath);
+    }
+
+    if (pathsToMove.Count == 0)
     {
       return new LoaderActionResult(false, "The RBA autoloader is already disabled.");
     }
 
-    var disabledPath = NextSidecarPath(status.TargetPath, "disabled");
-    File.Move(status.TargetPath, disabledPath);
+    var movedPaths = MoveOutsideAutoexec(status, pathsToMove, activeKind: "disabled");
     return new LoaderActionResult(
         true,
-        "The loader was removed from active autoexec and kept as a recoverable disabled copy.",
-        disabledPath);
+        $"Disabled completely. Moved {movedPaths.Count} RBA-managed file(s) out of autoexec.",
+        status.StorageDirectory);
   }
 
   internal static string NormalizeDirectory(string directory)
@@ -141,14 +172,128 @@ internal sealed class AutoexecService
     return fullPath;
   }
 
-  private static string NextSidecarPath(string targetPath, string kind)
+  private void WriteActiveLoader(LoaderStatus status)
   {
-    var timestamp = DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss");
-    var candidate = $"{targetPath}.{kind}.{timestamp}";
+    var temporaryPath = Path.Combine(
+        status.Directory,
+        $".{LoaderFileName}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
+
+    try
+    {
+      File.WriteAllBytes(temporaryPath, _loaderBytes);
+      File.Move(temporaryPath, status.TargetPath, overwrite: true);
+    }
+    finally
+    {
+      if (File.Exists(temporaryPath))
+      {
+        File.Delete(temporaryPath);
+      }
+    }
+  }
+
+  private bool TryRestoreStoredLoader(LoaderStatus status)
+  {
+    if (!Directory.Exists(status.StorageDirectory))
+    {
+      return false;
+    }
+
+    var candidate = Directory.EnumerateFiles(status.StorageDirectory, $"{LoaderFileName}.disabled.*")
+        .OrderByDescending(File.GetLastWriteTimeUtc)
+        .FirstOrDefault(path => Hash(File.ReadAllBytes(path)) == _sourceHash);
+    if (candidate is null)
+    {
+      return false;
+    }
+
+    var temporaryPath = Path.Combine(
+        status.Directory,
+        $".{LoaderFileName}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
+    try
+    {
+      File.Copy(candidate, temporaryPath, overwrite: false);
+      File.Move(temporaryPath, status.TargetPath, overwrite: true);
+      try
+      {
+        File.Delete(candidate);
+      }
+      catch (IOException)
+      {
+        // The active copy is restored; retaining an outside-autoexec copy is safe.
+      }
+
+      return true;
+    }
+    finally
+    {
+      if (File.Exists(temporaryPath))
+      {
+        File.Delete(temporaryPath);
+      }
+    }
+  }
+
+  private List<string> MoveOutsideAutoexec(LoaderStatus status, IEnumerable<string> sourcePaths, string activeKind)
+  {
+    var paths = sourcePaths
+        .Where(File.Exists)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (paths.Length == 0)
+    {
+      return [];
+    }
+
+    Directory.CreateDirectory(status.StorageDirectory);
+    var movedPaths = new List<string>(paths.Length);
+    foreach (var sourcePath in paths)
+    {
+      var isActive = sourcePath.Equals(status.TargetPath, StringComparison.OrdinalIgnoreCase);
+      var name = isActive
+          ? $"{LoaderFileName}.{activeKind}.{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}"
+          : Path.GetFileName(sourcePath);
+      var destinationPath = NextAvailablePath(status.StorageDirectory, name);
+      File.Move(sourcePath, destinationPath);
+      movedPaths.Add(destinationPath);
+    }
+
+    return movedPaths;
+  }
+
+  private string GetStorageDirectory(string autoexecDirectory)
+  {
+    var identity = Convert.ToHexString(SHA256.HashData(
+        Encoding.UTF8.GetBytes(autoexecDirectory.ToUpperInvariant())))
+        .ToLowerInvariant()[..16];
+    return Path.Combine(_storageRoot, identity);
+  }
+
+  private static IReadOnlyList<string> GetManagedPaths(string directory)
+  {
+    if (!Directory.Exists(directory))
+    {
+      return [];
+    }
+
+    return Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
+        .Where(path => IsManagedFileName(Path.GetFileName(path)))
+        .ToArray();
+  }
+
+  private static bool IsManagedFileName(string name) =>
+      name.Equals(LoaderFileName, StringComparison.OrdinalIgnoreCase)
+      || name.StartsWith($"{LoaderFileName}.", StringComparison.OrdinalIgnoreCase)
+      || (name.StartsWith($".{LoaderFileName}.", StringComparison.OrdinalIgnoreCase)
+          && name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase));
+
+  private static string NextAvailablePath(string directory, string name)
+  {
+    var candidate = Path.Combine(directory, name);
     var suffix = 1;
     while (File.Exists(candidate))
     {
-      candidate = $"{targetPath}.{kind}.{timestamp}.{suffix++}";
+      candidate = Path.Combine(directory, $"{name}.moved.{suffix++}");
     }
 
     return candidate;

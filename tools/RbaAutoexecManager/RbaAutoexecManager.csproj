@@ -13,7 +13,7 @@
     <SelfContained>true</SelfContained>
     <PublishTrimmed>false</PublishTrimmed>
     <DebugType>embedded</DebugType>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Authors>RBA contributors</Authors>
     <Description>Enable, update, or safely disable the RBA Lua autoloader for supported executors.</Description>
   </PropertyGroup>

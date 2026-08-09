@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "RBA Autoexec Manager",
+  "version": "1.0.2",
+  "sourceRef": "rba-autoexec-manager-v1.0.2",
+  "asset": {
+    "fileName": "RBA.Autoexec.Manager.exe",
+    "size": 116185296,
+    "sha256": "59ed541ba09851c876c8091f84810712359229a1b6475aa82ab32677240cdb3b",
+    "authenticode": "unsigned"
+  },
+  "behavior": [
+    "Embeds the repository's lua/rba_autoloader.lua file.",
+    "Leaves only the active rba_autoloader.lua inside autoexec while enabled.",
+    "Moves every RBA-managed loader, backup, disabled copy, and orphan temporary file outside autoexec when disabled.",
+    "Stores recoverable copies under Local AppData/RBA Autoexec Manager/loader-storage.",
+    "Restores a matching disabled loader from outside-autoexec storage when re-enabled."
+  ]
+}

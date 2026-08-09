@@ -64,7 +64,9 @@ Windows users can also build or run the standalone **RBA Autoexec Manager** in
 `tools/RbaAutoexecManager`. Its GUI detects enabled, disabled, and outdated
 states for Volt, Potassium, or a custom folder. The executable embeds this same
 checked-in loader, updates it atomically, and preserves recoverable backup or
-disabled sidecar files instead of silently discarding an existing loader.
+disabled copies in the manager's Local AppData storage outside `autoexec`. Only
+the one active `rba_autoloader.lua` is ever left in `autoexec` while enabled;
+disabling evacuates every RBA-managed loader, backup, and temporary file.
 
 To run RBA without the companion connector:
 
