@@ -1,6 +1,6 @@
 {
   "name": "roblox-bridge-agent",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A local-first MCP bridge, script capsule runtime, and observability dashboard for authorized Roblox development.",
   "license": "MIT",
   "repository": {
@@ -35,7 +35,7 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "test": "npm run build && node tests/runtime-stability.mjs && node tests/capsule-smoke.mjs"
+    "test": "npm run build && node tests/integration-catalog.mjs && node tests/runtime-stability.mjs && node tests/capsule-smoke.mjs && node tests/autoexec-manager.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.21.0",

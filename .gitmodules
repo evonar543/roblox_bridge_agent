@@ -1,0 +1,3 @@
+[submodule "integrations/roblox-instance-manager-src"]
+	path = integrations/roblox-instance-manager-src
+	url = https://github.com/Muhammad-Tanvirul-Islam-Shayeem/Roblox-MCP.git

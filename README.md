@@ -65,7 +65,7 @@ Requirements:
 Install and verify:
 
 ```powershell
-git clone https://github.com/evonar543/roblox_bridge_agent.git
+git clone --recurse-submodules https://github.com/evonar543/roblox_bridge_agent.git
 Set-Location roblox_bridge_agent
 npm install
 npm test
@@ -119,6 +119,71 @@ getgenv().RBA_MODE = "rba-only"
 -- or
 getgenv().RBA_ENABLE_INSTANCE_MANAGER = false
 ```
+
+## Supported integrations
+
+RBA now has a first-class integration registry shown by `rba_list_integrations`
+and the dashboard's **Connected Workflow** panel. It reports live status for RBA
+Core, the Roblox Instance Manager companion, Potassium and Volt autoexec targets,
+and the active Codex MCP server.
+
+The Roblox Instance Manager source is included as a pinned, attributed Git
+submodule under `integrations/roblox-instance-manager-src`. Run
+`scripts/setup-integrations.ps1` to initialize and build both projects. See
+[`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) for the full source, autoexec, MCP,
+and troubleshooting workflow.
+
+The same localhost dashboard now includes a **Setup Center** where users can add
+autoexec folders, see whether each loader is current, and synchronize every
+configured target without editing environment variables by hand. The guided
+PowerShell installer is idempotent and explains every install, reuse, build, and
+failure step.
+
+### RBA Autoexec Manager for Windows
+
+The standalone **RBA Autoexec Manager** provides a simple GUI for Volt,
+Potassium, and custom `autoexec` folders. It reports whether
+`rba_autoloader.lua` is disabled, current, or outdated. **Enable** installs the
+exact loader embedded from this repository. **Disable safely** moves the active
+loader and every RBA-managed sidecar completely out of `autoexec` into private
+manager storage under Local AppData. Updating a different loader also preserves
+it outside `autoexec`, so the executor cannot accidentally run a backup or
+disabled copy.
+
+**[Download RBA Autoexec Manager 1.0.2](https://github.com/evonar543/roblox_bridge_agent/releases/download/rba-autoexec-manager-v1.0.2/RBA.Autoexec.Manager.exe)**
+
+#### Release safety and verification
+
+| Check | Release 1.0.2 |
+| --- | --- |
+| SHA-256 | `59ed541ba09851c876c8091f84810712359229a1b6475aa82ab32677240cdb3b` |
+| Checksum file | [RBA.Autoexec.Manager.v1.0.2.sha256](tools/RbaAutoexecManager/releases/RBA.Autoexec.Manager.v1.0.2.sha256) |
+| Release manifest | [RBA.Autoexec.Manager.v1.0.2.manifest.json](tools/RbaAutoexecManager/releases/RBA.Autoexec.Manager.v1.0.2.manifest.json) |
+| Windows signature | Unsigned; Windows may show an unknown-publisher warning |
+
+Verify the downloaded file locally before running it:
+
+```powershell
+Get-FileHash -Algorithm SHA256 ".\RBA.Autoexec.Manager.exe"
+```
+
+The output must exactly match the SHA-256 above. A VirusTotal link for another
+hash does not apply to this build. Scanner results are additional signals, not a
+guarantee that any file is safe. The app's full source, embedded Lua loader, icon
+generator, and build script are available in this repository for inspection.
+
+Build a self-contained Windows x64 executable with .NET 10:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\RbaAutoexecManager\build.ps1
+```
+
+The executable is written to
+`artifacts\rba-autoexec-manager\win-x64\RBA Autoexec Manager.exe`. It includes
+the Lua loader and does not require a separately installed .NET runtime. The SVG
+icon source is in `tools/RbaAutoexecManager/assets/rba-autoexec-manager.svg`.
+For scripted setup, the same executable also accepts `--enable`, `--disable`, or
+`--status` with `--target Volt`, `--target Potassium`, or `--directory <path>`.
 
 ## Script Capsules
 

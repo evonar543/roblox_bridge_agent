@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>RbaAutoexecManager</RootNamespace>
+    <AssemblyName>RBA Autoexec Manager</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="Exists('assets\rba-autoexec-manager.ico')">assets\rba-autoexec-manager.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>embedded</DebugType>
+    <Version>1.0.2</Version>
+    <Authors>RBA contributors</Authors>
+    <Description>Enable, update, or safely disable the RBA Lua autoloader for supported executors.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\lua\rba_autoloader.lua"
+                      Link="Resources\rba_autoloader.lua"
+                      LogicalName="RbaAutoexecManager.Resources.rba_autoloader.lua" />
+    <EmbeddedResource Include="assets\rba-autoexec-manager.svg"
+                      LogicalName="RbaAutoexecManager.Resources.rba-autoexec-manager.svg" />
+    <EmbeddedResource Include="assets\rba-autoexec-manager.ico"
+                      LogicalName="RbaAutoexecManager.Resources.rba-autoexec-manager.ico"
+                      Condition="Exists('assets\rba-autoexec-manager.ico')" />
+  </ItemGroup>
+</Project>
