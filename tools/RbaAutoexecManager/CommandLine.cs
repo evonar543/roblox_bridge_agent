@@ -105,6 +105,10 @@ internal static class CommandLine
       var disabled = service.Disable(testRoot);
       Require(disabled.Changed && disabled.BackupPath is not null && File.Exists(disabled.BackupPath), "Disable should preserve a recoverable copy.");
       Require(service.GetStatus(testRoot).State == LoaderState.Disabled, "Disabled loader should leave active autoexec.");
+
+      ApplicationConfiguration.Initialize();
+      using var form = new MainForm(service, new AppSettings());
+      Require(form.Handle != IntPtr.Zero, "The main GUI should construct and create its native window handle.");
       Console.WriteLine("RBA Autoexec Manager self-test passed.");
       return 0;
     }

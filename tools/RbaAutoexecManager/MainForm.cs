@@ -48,7 +48,7 @@ internal sealed class MainForm : Form
     BuildLayout();
     SelectSavedTarget();
 
-    _targetSelector.SelectedIndexChanged += (_, _) => TargetChanged();
+    _targetSelector.SelectedIndexChanged += (_, _) => TargetChanged(saveSettings: true);
     _browseButton.Click += (_, _) => BrowseForDirectory();
     _pathBox.TextChanged += (_, _) =>
     {
@@ -63,7 +63,7 @@ internal sealed class MainForm : Form
     _refreshButton.Click += (_, _) => RefreshStatus();
     _openButton.Click += (_, _) => OpenDirectory();
     _refreshTimer.Tick += (_, _) => RefreshStatus();
-    TargetChanged();
+    TargetChanged(saveSettings: false);
     FormClosing += (_, _) => SaveSettings();
     Shown += (_, _) =>
     {
@@ -242,7 +242,7 @@ internal sealed class MainForm : Form
 
   private string SelectedTargetKey() => _targetSelector.SelectedItem?.ToString() ?? "Volt";
 
-  private void TargetChanged()
+  private void TargetChanged(bool saveSettings)
   {
     var target = SelectedTargetKey();
     _settings.SelectedTarget = target;
@@ -254,7 +254,10 @@ internal sealed class MainForm : Form
       "Custom" => _settings.CustomDirectory,
       _ => AutoexecService.DefaultDirectory("Volt")
     };
-    SaveSettings();
+    if (saveSettings)
+    {
+      SaveSettings();
+    }
     RefreshStatus();
   }
 
@@ -397,7 +400,8 @@ internal sealed class MainForm : Form
           .GetManifestResourceStream("RbaAutoexecManager.Resources.rba-autoexec-manager.ico");
       if (stream is not null)
       {
-        Icon = new Icon(stream);
+        using var loadedIcon = new Icon(stream);
+        Icon = (Icon)loadedIcon.Clone();
       }
     }
     catch
@@ -411,7 +415,12 @@ internal sealed class LogoControl : Control
 {
   internal LogoControl()
   {
-    DoubleBuffered = true;
+    SetStyle(
+      ControlStyles.UserPaint
+      | ControlStyles.AllPaintingInWmPaint
+      | ControlStyles.OptimizedDoubleBuffer
+      | ControlStyles.SupportsTransparentBackColor,
+      true);
     BackColor = Color.Transparent;
   }
 

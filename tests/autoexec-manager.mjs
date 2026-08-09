@@ -16,8 +16,10 @@ assert.match(service, /File\.Move\(status\.TargetPath, disabledPath\)/);
 assert.match(service, /File\.Copy\(status\.TargetPath, backupPath/);
 assert.match(form, /"Volt", "Potassium", "Custom"/);
 assert.match(form, /Enabled and current/);
+assert.match(form, /ControlStyles\.SupportsTransparentBackColor/);
 assert.match(commandLine, /--self-test/);
 assert.match(commandLine, /LoaderState\.Outdated/);
+assert.match(commandLine, /form\.Handle != IntPtr\.Zero/);
 assert.match(svg, /^<svg[\s\S]*<title[^>]*>RBA Autoexec Manager<\/title>[\s\S]*<\/svg>\s*$/);
 assert.match(loader, /local LOADER_VERSION = "[^"]+"/);
 
