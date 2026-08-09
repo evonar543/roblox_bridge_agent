@@ -10,6 +10,19 @@ Security fixes target the latest commit on `main`.
 
 Do not publish secrets, exploit payloads, or private environment details in a public issue. Use GitHub's private vulnerability reporting for this repository when available. Include the affected version, reproduction conditions, expected impact, and the smallest safe reproduction.
 
+## Verifying Windows release downloads
+
+RBA Autoexec Manager release assets include a SHA-256 checksum and JSON manifest.
+Compare the downloaded EXE with the checksum published both in the GitHub release
+and the repository README before running it. A checksum proves that the file you
+downloaded is byte-for-byte identical to the published artifact; it does not by
+itself prove that software is safe.
+
+Release 1.0.1 is not Authenticode-signed, so Windows may show an unknown-publisher
+warning. Its source and build script are under `tools/RbaAutoexecManager`, and the
+release page links to a VirusTotal report for the exact published SHA-256. Treat
+scanner results as one security signal rather than an absolute guarantee.
+
 ## Deployment boundary
 
 - Keep `RBA_WS_HOST` and the dashboard host on loopback.

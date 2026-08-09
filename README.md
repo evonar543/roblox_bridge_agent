@@ -148,6 +148,29 @@ exact loader embedded from this repository; **Disable safely** moves the active
 file to a timestamped `.disabled` sidecar so it can be recovered. Replacing a
 different or outdated loader also creates a `.bak` copy first.
 
+**[Download RBA Autoexec Manager 1.0.1](https://github.com/evonar543/roblox_bridge_agent/releases/download/rba-autoexec-manager-v1.0.1/RBA.Autoexec.Manager.exe)**
+
+#### Release safety and verification
+
+| Check | Release 1.0.1 |
+| --- | --- |
+| SHA-256 | `e701ee0cc779a7786d7a1d75e59753c9fe831ba4823104fafb97e9fcdc953208` |
+| VirusTotal | [View the report for this exact SHA-256](https://www.virustotal.com/gui/file/e701ee0cc779a7786d7a1d75e59753c9fe831ba4823104fafb97e9fcdc953208/detection) |
+| Checksum file | [RBA.Autoexec.Manager.v1.0.1.sha256](tools/RbaAutoexecManager/releases/RBA.Autoexec.Manager.v1.0.1.sha256) |
+| Release manifest | [RBA.Autoexec.Manager.v1.0.1.manifest.json](tools/RbaAutoexecManager/releases/RBA.Autoexec.Manager.v1.0.1.manifest.json) |
+| Windows signature | Unsigned; Windows may show an unknown-publisher warning |
+
+Verify the downloaded file locally before running it:
+
+```powershell
+Get-FileHash -Algorithm SHA256 ".\RBA.Autoexec.Manager.exe"
+```
+
+The output must exactly match the SHA-256 above. VirusTotal is an additional
+scanner signal, not a guarantee that any file is safe. The app's full source,
+embedded Lua loader, icon generator, and build script are available in this
+repository for inspection.
+
 Build a self-contained Windows x64 executable with .NET 10:
 
 ```powershell
